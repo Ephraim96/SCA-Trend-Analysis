@@ -1,0 +1,134 @@
+---
+title: "SCA Data-Trend Analysis"
+author: "Ephraim Romesberg"
+date: "2024-11-06"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(rkt)
+library(ggplot2)
+library(tidyr)
+source("Seasonal_Tau.R")
+source("Seasonal_Theil_Sen.R")
+source("Bootstrap_SCI.R")
+SCA_Database <- read.csv("Data/SCA_Database.csv")
+```
+
+
+Getting the Data Ready to Run Regional-Seasonal Kendall Test:
+
+
+```{r}
+#filtering to only include data from KALI, PLNO, and PLSO (these are the only sites which have enough data to run a trend test).
+#The data is filtered to only include observations from the top meter.
+#Within each combination of Site, Month, and Year the temperature values are aggregated using the Median.
+SCA_trend_Data=SCA_Database%>%filter(Site %in% c("KALI","PLNO","PLSO"))%>%filter(Depth<=1)%>%group_by(Site,Month,Year)%>%summarise(Temperature=median(Temp))%>%ungroup()
+#Converting the month variable to a factor so it is ordered properly
+SCA_trend_Data$Month=factor(SCA_trend_Data$Month,levels = month.abb,ordered = TRUE)
+#Ordering the rows of the table by Site, Month, and Year (low to high) 
+SCA_trend_Data=SCA_trend_Data%>%arrange(Site,Month,Year)
+```
+
+
+```{r}
+#Counting the number of years of data available in each Site-Month combination (this way we can filter to only use Site-Month values that have a sufficient number of years of data).
+n_Years=SCA_trend_Data%>%group_by(Site,Month)%>%summarise(n_Years=n_distinct(Year))%>%ungroup()
+SCA_trend_Data=left_join(SCA_trend_Data,n_Years,by=c("Site","Month"))
+```
+
+
+```{r}
+#Creating a single Region_Season variable by combining sites and months.
+SCA_trend_Data=SCA_trend_Data%>%mutate(Site_Month=paste(Site,Month,sep = "_"))
+#For the rkt function at least 4 years of data are required for each block.
+#We have the most data and the smallest gaps in June, July, August, and September.
+SCA_trend_Data=filter(SCA_trend_Data,n_Years>=5,Month %in% c("Jun","Jul","Aug","Sep"))
+```
+
+
+```{r}
+write.csv(SCA_trend_Data,file = "Data/SCA_trend_Data.csv")
+```
+  
+
+```{r}
+regional_seasonal_test=rkt(date=SCA_trend_Data$Year,y=round(SCA_trend_Data$Temperature,2),block = as.integer(factor(SCA_trend_Data$Site_Month)),correct = TRUE)
+print(regional_seasonal_test)
+```
+
+
+```{r}
+regional_test=function(i){
+  Data=filter(SCA_trend_Data,Month==i)
+  regional_test=rkt(date=Data$Year,y=round(Data$Temperature,2),block = as.integer(factor(Data$Site_Month)),correct = TRUE)
+  return(regional_test)}
+
+regional_tests_by_month=lapply(c("Jun","Jul","Aug","Sep"),regional_test)
+```
+
+
+```{r}
+mk=function(year,temp,site_month){mk.test=rkt(date = year,y=temp,block = as.integer(factor(site_month)),correct = TRUE)
+tau=mk.test$tau
+TS.slope=mk.test$B
+p.corrected=mk.test$sl.corrected
+df=data.frame(tau,TS.slope,p.corrected)
+return(df)}
+```
+
+
+```{r}
+SCA_trend_Data%>%group_by(Month)%>%summarise(mk(year = Year,temp = round(Temperature,2),site_month = Site_Month),n_distinct(Site,Year))
+```
+
+
+Bootstrapping to get simultaneous confidence intervals for Tau and Theil-Sen's slope:
+
+
+```{r}
+B=100000
+N=nrow(SCA_trend_Data)
+seasons=month.abb[6:9]
+seasons_combn=matrix(seasons[t(combn(4,2))],byrow = FALSE,ncol = 2)
+seasons_diff=paste(seasons_combn[,1],seasons_combn[,2],sep = "-")
+Bootstrap_Tau=matrix(nrow = B,ncol = 11)
+colnames(Bootstrap_Tau)=c("RS-Tau",seasons,seasons_diff)
+Bootstrap_Theil_Sen=matrix(nrow = B,ncol = 11)
+colnames(Bootstrap_Theil_Sen)=c("RS-Slope",seasons,seasons_diff)
+```
+
+
+```{r,cache=TRUE}
+seed=12345
+
+for (i in 1:B){
+  SCA_trend_Data_b=SCA_trend_Data[sample(1:N,size = N,replace = TRUE),]
+  
+  Bootstrap_Tau[i,"RS-Tau"]=Seasonal_Tau(x=SCA_trend_Data_b$Year,y=round(SCA_trend_Data_b$Temperature,2),block = SCA_trend_Data_b$Site_Month)
+  Bootstrap_Theil_Sen[i,"RS-Slope"]=Seasonal_Theil_Sen(x=SCA_trend_Data_b$Year,y=round(SCA_trend_Data_b$Temperature,2),block = SCA_trend_Data_b$Site_Month)
+
+  By_Season=SCA_trend_Data_b%>%group_by(Month)%>%summarise(Tau=Seasonal_Tau(x=Year,y=round(Temperature,2),block=Site_Month),Slope=Seasonal_Theil_Sen(x=Year,y=round(Temperature,2),block=Site_Month))
+  
+  Bootstrap_Tau[i,seasons]=By_Season$Tau
+  Bootstrap_Theil_Sen[i,seasons]=By_Season$Slope
+}
+
+for (i in 1:6){
+  Bootstrap_Tau[,seasons_diff[i]]=Bootstrap_Tau[,seasons_combn[i,1]]-Bootstrap_Tau[,seasons_combn[i,2]]
+  Bootstrap_Theil_Sen[,seasons_diff[i]]=Bootstrap_Theil_Sen[,seasons_combn[i,1]]-Bootstrap_Theil_Sen[,seasons_combn[i,2]]
+}
+
+Bootstrap_Tau=tibble(data.frame(Bootstrap_Tau))
+Bootstrap_Theil_Sen=tibble(data.frame(Bootstrap_Theil_Sen))
+```
+
+
+
+```{r}
+Tau_CI=bind_rows(Bootstrap_SCI(Bootstrap_Tau[,1]),Bootstrap_SCI(Bootstrap_Tau[,2:5]),Bootstrap_SCI(Bootstrap_Tau[,6:11]))
+Theil_Sen_CI=bind_rows(Bootstrap_SCI(Bootstrap_Theil_Sen[,1]),Bootstrap_SCI(Bootstrap_Theil_Sen[,2:5]),Bootstrap_SCI(Bootstrap_Theil_Sen[,6:11]))
+```

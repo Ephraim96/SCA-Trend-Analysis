@@ -1,0 +1,41 @@
+---
+title: "SCA Data-Function Speed Test"
+author: "Ephraim Romesberg"
+date: "2024-12-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(microbenchmark)
+library(dplyr)
+source("Seasonal_Tau.R")
+source("Seasonal_Theil_Sen.R")
+source("ThermalLayers.R")
+SCA_Database <- read.csv("Data/SCA_Database.csv")
+SCA_trend_Data <- read.csv("Data/SCA_trend_Data.csv")
+```
+
+Seasonal Kendall's Tau Function:
+
+```{r}
+print(microbenchmark(Seasonal_Tau(SCA_trend_Data$Year,SCA_trend_Data$Temperature,block = SCA_trend_Data$Site_Month),times = 1000))
+```
+
+Seasonal Theil-Sen's Slope:
+
+```{r}
+print(microbenchmark(Seasonal_Theil_Sen(SCA_trend_Data$Year,SCA_trend_Data$Temperature,block = SCA_trend_Data$Site_Month),times = 1000))
+```
+
+Thermal Layer Function (without spline approximation):
+
+```{r}
+microbenchmark(ungroup(SCA_Database%>%group_by(Site,Date)%>%mutate(Layer=thermal.layers(Temp,Depth,spline_approx = FALSE))),times=10)
+```
+
+Thermal Layer Function (with spline approximation):
+
+```{r}
+microbenchmark(ungroup(SCA_Database%>%group_by(Site,Date)%>%mutate(Layer=thermal.layers(Temp,Depth,spline_approx = TRUE))),times=10)
+```

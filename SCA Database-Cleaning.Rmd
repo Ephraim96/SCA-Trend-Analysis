@@ -1,0 +1,141 @@
+---
+title: "SCA Database-Cleaning"
+author: "Ephraim Romesberg"
+date: "2024-10-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(readxl)
+library(lubridate)
+library(janitor)
+library(tidyr)
+source("ThermalLayers.R")
+```
+
+# Cleaning Data:
+
+## Importing sheet names:
+
+
+```{r}
+SCA_file_path="Data/0 SCA Database DO_Temp-4.xlsx"
+```
+
+
+```{r}
+Site_Names=excel_sheets(SCA_file_path)[2:18]
+```
+
+## Importing data from all sheets in database:
+
+```{r,warning=FALSE}
+All_Sites=lapply(Site_Names,function(x){read_excel(SCA_file_path,sheet = x, range = cell_cols("C:H"),col_types = c("text","skip",rep("numeric",4)))})
+
+names(All_Sites)=Site_Names
+All_Sites=lapply(All_Sites,function(x){names(x)=c("Date","Depth","DO","%_DO","Temp")
+return(x)})
+```
+
+## Merging sheets into one table:
+
+```{r}
+SCA_Database=bind_rows(All_Sites,.id="Site")
+```
+
+## Removing rows with missing depth or temp values:
+
+```{r}
+#Keeping all rows that have a value for Temp or DO or % DO:
+SCA_Database=filter(SCA_Database,((!is.na(Temp))|(!is.na(DO))|(!is.na(`%_DO`))))
+#Out of these rows, which ones are missing Temp or Depth?
+filter(SCA_Database,((is.na(Temp))|(is.na(Depth))))%>%mutate_at("Date",convert_to_date,character_fun = lubridate::mdy)
+```
+
+
+```{r}
+SCA_Database=filter(SCA_Database,!(is.na(Depth)|is.na(Temp)))
+SCA_Database$Date=convert_to_date(SCA_Database$Date,character_fun = lubridate::mdy)
+SCA_Database$Year=as.character(year(SCA_Database$Date))
+SCA_Database$Month=month(SCA_Database$Date,label = TRUE)
+#Order rows by values of Site, Date, and Depth columns (low to high)
+SCA_Database=SCA_Database%>%arrange(Site,Date,Depth)
+#View(SCA_Database)
+```
+
+## Making Sure no rows are missing dates:
+
+```{r}
+sum(is.na(SCA_Database$Date))
+sum(is.na(SCA_Database$Month)|is.na(SCA_Database$Year))
+#View(filter(SCA_Database,is.na(Date)))
+```
+
+## Removing duplicates (in this case duplicates are rows with the same value for Site, Date, and Depth):
+
+```{r}
+duplicates=which(duplicated(select(SCA_Database,Site,Date,Depth)))
+#number of duplicates:
+length(duplicates)
+#sites which have duplicate rows:
+unique(SCA_Database[duplicates,"Site"])
+#View(SCA_Database[duplicates,])
+#removing duplicate rows:
+SCA_Database=SCA_Database[-duplicates,]
+```
+
+
+```{r}
+#Here we check to make sure no temp profiles have duplicate rows due to rounding errors (e.g. having depth values of 1 and 1.0000001 which were not counted as duplicates).
+#We make sure that for each temp profile all depth values are still unique when rounded to the first decimal place.
+any((SCA_Database%>%group_by(Site,Date)%>%summarise(any(duplicated(round(Depth,1))))%>%ungroup())[,3])
+```
+
+
+# Calculating Thermal Layers:
+
+
+```{r}
+#Calculating Thermal Layers using the raw temperature profile data:
+SCA_Database=ungroup(SCA_Database%>%group_by(Site,Date)%>%mutate(Layer=thermal.layers(Temp,Depth,spline_approx = FALSE)))
+#Calculating Thermal Layers using smooth spline approximation of temperature profiles:
+SCA_Database=ungroup(SCA_Database%>%group_by(Site,Date)%>%mutate(Layer_Spline=thermal.layers(Temp,Depth,spline_approx = TRUE)))
+```
+
+
+# Creating Metadata:
+
+## For each site and year, how many dates do we have data from?
+
+
+```{r}
+Dates_Sampled=ungroup(SCA_Database%>%group_by(Site,Year)%>%summarise("Dates_Sampled"=length(unique(Date))))
+Dates_Sampled$Year=as.integer(Dates_Sampled$Year)
+Dates_Sampled$Year=factor(Dates_Sampled$Year,levels = min(Dates_Sampled$Year):max(Dates_Sampled$Year))
+Dates_Sampled=pivot_wider(data = Dates_Sampled,names_from = Year,values_from = Dates_Sampled,names_expand=TRUE)
+#View(Dates_Sampled)
+```
+
+
+## For each site and month, how many years do we have data from?
+
+
+```{r}
+Years_Sampled=ungroup(SCA_Database%>%group_by(Site,Month)%>%summarise("Years_Sampled"=length(unique(Year))))
+Years_Sampled=pivot_wider(data = Years_Sampled,names_from = Month,values_from = Years_Sampled,names_expand=TRUE)
+#View(Years_Sampled)
+```
+
+
+# Saving data/metadata:
+
+
+```{r}
+write.csv(SCA_Database,file = "~/Desktop/SCA Data/Cleaned up Database/SCA_Database.csv")
+write.csv(Dates_Sampled,file = "~/Desktop/SCA Data/Cleaned up Database/SCA_Dates_Sampled.csv")
+write.csv(Years_Sampled,file = "~/Desktop/SCA Data/Cleaned up Database/SCA_Years_Sampled.csv")
+#The previous three files were saved to a second location not in the project, this step can be ignored. If you are rerunning the code everything you need is contained in the r project. Just save the SCA_Database file in the project data folder: 
+write.csv(SCA_Database,file = "Data/SCA_Database.csv")
+```
