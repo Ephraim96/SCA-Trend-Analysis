@@ -1,0 +1,48 @@
+---
+title: "Trend Analysis of Priest Lake Water Temperature Data"
+author: "Ephraim Romesberg"
+date: "2024-12-31"
+output: powerpoint_presentation
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(ggplot2)
+library(zoo)
+SCA_trend_Data <- read.csv("Data/SCA_trend_Data.csv")
+SCA_Database <- read.csv("Data/SCA_Database.csv")
+```
+
+## The Data
+
+```{r}
+ SCA_trend_Data$Date=as.Date(as.yearmon(paste(SCA_trend_Data$Month,SCA_trend_Data$Year,sep="-"),'%b-%Y'))
+ggplot(data = SCA_trend_Data,aes(x=Date,y=Temperature))+geom_line(aes(colour = Site))+facet_grid(rows = vars(Site))+theme_bw()
+```
+
+## Can we Use Linear Regression?
+
+```{r}
+ SCA_trend_Data$Date=as.Date(as.yearmon(paste(SCA_trend_Data$Month,SCA_trend_Data$Year,sep="-"),'%b-%Y'))
+ggplot(data = SCA_trend_Data,aes(x=Date,y=Temperature))+geom_line(aes(colour = Site))+geom_smooth(method = "lm",formula=y~x,se=FALSE,linewidth=.5,color="black")+facet_grid(rows = vars(Site))+theme_bw()
+```
+
+
+## Problems With Using Linear Regression
+
+- Assumes data is normally distributed
+- Relationship between x and y is linear 
+- 
+
+## Slide with R Output
+
+```{r cars, echo = TRUE}
+summary(cars)
+```
+
+## Slide with Plot
+
+```{r pressure}
+plot(pressure)
+```
+
