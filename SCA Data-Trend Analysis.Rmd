@@ -19,7 +19,7 @@ SCA_Database <- read.csv("Data/SCA_Database.csv")
 ```
 
 
-Getting the Data Ready to Run Regional-Seasonal Kendall Test:
+## Getting the Data Ready to Run Regional-Seasonal Kendall Test:
 
 
 ```{r}
@@ -54,23 +54,18 @@ SCA_trend_Data=filter(SCA_trend_Data,n_Years>=5,Month %in% c("Jun","Jul","Aug","
 write.csv(SCA_trend_Data,file = "Data/SCA_trend_Data.csv")
 ```
   
+## Running the Regional-Seasonal Kendall Test on the data:
 
+The seasons: June, July, August, and September and regions: KALI, PLNO, and PLSO are used. Site_Month is used as the block variable.
 ```{r}
 regional_seasonal_test=rkt(date=SCA_trend_Data$Year,y=round(SCA_trend_Data$Temperature,2),block = as.integer(factor(SCA_trend_Data$Site_Month)),correct = TRUE)
 print(regional_seasonal_test)
 ```
+Based on the tau value of approximately `.27` and p-value (adjusted for inter-block correlation) of approximately  `0.005` we can conclude that in one or more of the site-month combination's there is an increasing monotonic trend over time.
 
+## Looking at each season individually:
 
-```{r}
-regional_test=function(i){
-  Data=filter(SCA_trend_Data,Month==i)
-  regional_test=rkt(date=Data$Year,y=round(Data$Temperature,2),block = as.integer(factor(Data$Site_Month)),correct = TRUE)
-  return(regional_test)}
-
-regional_tests_by_month=lapply(c("Jun","Jul","Aug","Sep"),regional_test)
-```
-
-
+Now that we have determined that there is a trend in at least some of the Site-Month combinations we can look at each month individually. Here we run a Regional Kendall Test on data from the three regions (KALI, PLNO, and PLSO) for each season (June, July, August, and September).
 ```{r}
 mk=function(year,temp,site_month){mk.test=rkt(date = year,y=temp,block = as.integer(factor(site_month)),correct = TRUE)
 tau=mk.test$tau
@@ -81,14 +76,17 @@ return(df)}
 ```
 
 
+This table gives us the Tau values and Theil-Sen slope values for each month:
 ```{r}
-SCA_trend_Data%>%group_by(Month)%>%summarise(mk(year = Year,temp = round(Temperature,2),site_month = Site_Month),n_distinct(Site,Year))
+trend_by_season=SCA_trend_Data%>%group_by(Month)%>%summarise(mk(year = Year,temp = round(Temperature,2),site_month = Site_Month),n_distinct(Site,Year))
+trend_by_season
 ```
 
+From the table above we can see that the steepest and most significant trend is in July. There are also weakly  significant positive trends in June and August and no significant trend in September.
 
-Bootstrapping to get simultaneous confidence intervals for Tau and Theil-Sen's slope:
+## Bootstrapping to get simultaneous confidence intervals for Tau and Theil-Sen's slope:
 
-
+Here bootstrapping is used to obtain confidence intervals for the Kendall's Tau and Theil-Sen slope values. Simultaneous confidence intervals are constructed using methods described in [1, 2].
 ```{r}
 B=100000
 N=nrow(SCA_trend_Data)
@@ -127,8 +125,47 @@ Bootstrap_Theil_Sen=tibble(data.frame(Bootstrap_Theil_Sen))
 ```
 
 
+Simultaneous 95% CI for RS Tau, Tau for each season, and differences between Tau values for each pair of seasons:
+```{r}
+Bootstrap_SCI(Bootstrap_Tau)
+Bootstrap_SCI(Bootstrap_Theil_Sen)
+```
+
+The simultaneous confidence intervals above again show us that the Regional-Seasonal Tau is significant and indicates an increasing monotonic trend. They also indicate that the most significant trend is in July. Based on the CIs for the differences in Tau's we can see that there is a significant difference between the Tau values in July and September. This indicates that the trend is not the same in all seasons. The simultaneous CI's for the Theil-Sen slope values lead us to the same conclusions.  
+
+
+Creating simultaneous 95% CI's for RS.Tau and Tau values for each month as well as simultaneous 95% CI's for RS.Slope and Slope values for each month:
+```{r}
+Tau_CI=Bootstrap_SCI(Bootstrap_Tau[,1:5])
+Theil_Sen_CI=Bootstrap_SCI(Bootstrap_Theil_Sen[,1:5])
+```
+
 
 ```{r}
-Tau_CI=bind_rows(Bootstrap_SCI(Bootstrap_Tau[,1]),Bootstrap_SCI(Bootstrap_Tau[,2:5]),Bootstrap_SCI(Bootstrap_Tau[,6:11]))
-Theil_Sen_CI=bind_rows(Bootstrap_SCI(Bootstrap_Theil_Sen[,1]),Bootstrap_SCI(Bootstrap_Theil_Sen[,2:5]),Bootstrap_SCI(Bootstrap_Theil_Sen[,6:11]))
+Tau_CI_2=Tau_CI[1:5,]%>%left_join(trend_by_season,by=join_by(Parameter==Month))%>%select(Parameter,`2.5 %`,`97.5 %`,tau,p.corrected)
+Tau_CI_2[1,"tau"]=regional_seasonal_test$tau
+Tau_CI_2[1,"p.corrected"]=regional_seasonal_test$sl.corrected
+names(Tau_CI_2)[1]="season"
 ```
+
+
+```{r}
+Theil_Sen_CI_2=Theil_Sen_CI[1:5,]%>%left_join(trend_by_season,by=join_by(Parameter==Month))%>%select(Parameter,`2.5 %`,`97.5 %`,TS.slope)
+Theil_Sen_CI_2[1,"TS.slope"]=regional_seasonal_test$B
+names(Theil_Sen_CI_2)[1]="season"
+```
+
+
+```{r}
+write.csv(Tau_CI_2,file = "Data/Tau_CI.csv")
+write.csv(Theil_Sen_CI_2,file = "Data/Theil_Sen_CI.csv")
+```
+
+
+## References:
+
+1) Mandel, M., & Betensky, R. A. (2008). Simultaneous Confidence Intervals Based on the Percentile Bootstrap Approach. Computational statistics & data analysis, 52(4), 2158–2165. https://doi.org/10.1016/j.csda.2007.07.005
+
+2) Gao, X., Konietschke, F., & Li, Q. (2021). On the Admissibility of Simultaneous Bootstrap Confidence Intervals. Symmetry, 13(7), 1212. https://doi.org/10.3390/sym13071212
+
+
