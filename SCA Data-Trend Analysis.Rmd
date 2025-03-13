@@ -12,12 +12,14 @@ library(dplyr)
 library(rkt)
 library(ggplot2)
 library(tidyr)
+library(rLakeAnalyzer)
 source("Seasonal_Tau.R")
 source("Seasonal_Theil_Sen.R")
 source("Bootstrap_SCI.R")
 SCA_Database <- read.csv("Data/SCA_Database.csv")
 ```
 
+# Trend Test on data from top meter:
 
 ## Getting the Data Ready to Run Regional-Seasonal Kendall Test:
 
@@ -83,6 +85,7 @@ trend_by_season
 ```
 
 From the table above we can see that the steepest and most significant trend is in July. There are also weakly  significant positive trends in June and August and no significant trend in September.
+
 
 ## Bootstrapping to get simultaneous confidence intervals for Tau and Theil-Sen's slope:
 
@@ -161,8 +164,96 @@ write.csv(Tau_CI_2,file = "Data/Tau_CI.csv")
 write.csv(Theil_Sen_CI_2,file = "Data/Theil_Sen_CI.csv")
 ```
 
+## Running the trend test on data from the deep sites only (PLNO, PLSO):
 
-## References:
+```{r}
+#filtering to only include data from PLNO, and PLSO and June, July, August, September.
+#The data is filtered to only include observations from the top meter.
+#Within each combination of Site, Month, and Year the temperature values are aggregated using the Median.
+SCA_deep_Data=SCA_Database%>%filter(Site %in% c("PLNO","PLSO"),Month %in% c("Jun","Jul","Aug","Sep"))%>%filter(Depth<=1)%>%group_by(Site,Month,Year)%>%summarise(Temperature=median(Temp))%>%ungroup()
+#Converting the month variable to a factor so it is ordered properly
+SCA_deep_Data$Month=factor(SCA_deep_Data$Month,levels = month.abb,ordered = TRUE)
+#Ordering the rows of the table by Site, Month, and Year (low to high) 
+SCA_deep_Data=SCA_deep_Data%>%arrange(Site,Month,Year)
+SCA_deep_Data=SCA_deep_Data%>%mutate(Site_Month=paste(Site,Month,sep = "_"))
+```
+
+Regional-Seasonal Kendall trend test on data from the deep sites (Regions: PLNO, PLSO, Seasons: June, July, August, September):
+```{r}
+mk(year = SCA_deep_Data$Year,temp = round(SCA_deep_Data$Temperature,2),site_month = SCA_deep_Data$Site_Month)
+```
+Just as before this result indicates that there is a positive trend in one or more Site-Month combinations.
+
+Looking at the trend in the deep sites by season:
+```{r}
+deep_trend_by_season=SCA_deep_Data%>%group_by(Month)%>%summarise(mk(year = Year,temp = round(Temperature,2),site_month = Site_Month),n_distinct(Site,Year))
+deep_trend_by_season
+```
+
+We once again get very similar results here as we did using data from KALI, PLNO, PLSO: The steepest and most significant trend is in July, there are weakly significant positive trends in June and August and no significant trend in September.
+
+Our results from using data from the deep sites only (PLNO, PLSO) are nearly identical to the previous results that used data from KALI, PLNO, PLSO.
+
+
+# Looking at the Thermally Stratified data:
+
+## Looking at the Trend in each Thermal Layer:
+
+```{r}
+#Percentage of temp profiles which are not thermally stratified (by Site/Month):
+SCA_Database%>%filter(Site %in% c("KALI","PLNO","PLSO"),Month %in% c("Jun","Jul","Aug","Sep"))%>%group_by(Site,Month,Date)%>%summarise(nt=any(Layer_Spline=="No Thermocline"))%>%group_by(Site,Month)%>%summarise(mean(nt))
+```
+
+
+```{r}
+#filtering to only include data from PLNO, and PLSO and in July and August (these are the only deep sites which have enough data to run a trend test, and since were looking for thermally stratified data we only want to use data from the deep sites and in warm months).
+#Within each combination of Site, Month, Thermal Layer, and Year the temperature values are aggregated using the Median. 
+SCA_tl_trend_Data=SCA_Database%>%filter(Site %in% c("PLNO","PLSO"))%>%filter(Month %in% c("Jul","Aug"))%>%filter(Layer_Spline %in% c("Epilimnion","Thermocline","Hypolimnion"))%>%group_by(Site,Month,Layer_Spline,Year)%>%summarise(Temperature=median(Temp))%>%ungroup()
+#Converting the month and thermal layer variables to factors so they are ordered properly
+SCA_tl_trend_Data$Month=factor(SCA_tl_trend_Data$Month,levels = month.abb,ordered = TRUE)
+SCA_tl_trend_Data$Layer_Spline=factor(SCA_tl_trend_Data$Layer_Spline,levels=c("Epilimnion","Thermocline","Hypolimnion"),ordered = TRUE)
+#Ordering the rows of the table by Site, Month, Thermal Layer, and Year (low to high) 
+SCA_tl_trend_Data=SCA_tl_trend_Data%>%arrange(Site,Month,Layer_Spline,Year)
+#Creating a single Region_Season variable by combining sites and months.
+SCA_tl_trend_Data=SCA_tl_trend_Data%>%mutate(Site_Month=paste(Site,Month,sep = "_"))
+```
+
+
+This table gives us the Tau values and Theil-Sen slope values for each Thermal Layer (using data from PLNO and PLSO in July and August):
+```{r}
+trend_by_layer=SCA_tl_trend_Data%>%group_by(Layer_Spline)%>%summarise(mk(year = Year,temp = round(Temperature,2),site_month = Site_Month),n_distinct(Site,Month,Year))
+trend_by_layer
+```
+
+We can see that there is a significant positive trend in the Epilimnion and Thermocline but no significant trend in the Hypolimnion.
+
+## Testing for trend in the Thermocline depths:
+
+
+```{r}
+#filtering to only include data from PLNO, and PLSO and in July and August (these are the only deep sites which have enough data to run a trend test, and since were looking for thermally stratified data we only want to use data from the deep sites and in warm months).
+#Within each combination of Site, and Date we calculate the Thermocline depth, then in each combination of Site, Month, and Year the Thermocline depth values are aggregated using the median.
+SCA_thermo_depths=SCA_Database%>%filter(Site %in% c("PLNO","PLSO"))%>%filter(Month %in% c("Jul","Aug"))%>%group_by(Site,Year,Month,Date)%>%summarise(td=thermo.depth(wtr=Temp,depths=Depth))%>%ungroup()%>%group_by(Site,Month,Year)%>%summarise(thermo_depth=median(td))
+#Converting the month variable to a factor so it is ordered properly
+SCA_thermo_depths$Month=factor(SCA_thermo_depths$Month,levels = month.abb,ordered = TRUE)
+#removing NA values 
+SCA_thermo_depths=SCA_thermo_depths%>%filter(!is.na(thermo_depth))
+#Ordering the rows of the table by Site, Month, and Year (low to high) 
+SCA_thermo_depths=SCA_thermo_depths%>%arrange(Site,Month,Year)
+#Creating a single Region_Season variable by combining sites and months.
+SCA_thermo_depths=SCA_thermo_depths%>%mutate(Site_Month=paste(Site,Month,sep = "_"))
+```
+
+
+This table gives us the Tau, Theil-Sen slope and p-value for a Regional-Seasonal Kendall trend test on the Thermocline depths (using data from PLNO and PLSO in July and August):
+```{r}
+mk(year = SCA_thermo_depths$Year,temp = round(SCA_thermo_depths$thermo_depth,2),site_month = SCA_thermo_depths$Site_Month)
+```
+
+We can see that there is no significant trend of any kind in the Thermocline depths.
+
+
+# References:
 
 1) Mandel, M., & Betensky, R. A. (2008). Simultaneous Confidence Intervals Based on the Percentile Bootstrap Approach. Computational statistics & data analysis, 52(4), 2158–2165. https://doi.org/10.1016/j.csda.2007.07.005
 
