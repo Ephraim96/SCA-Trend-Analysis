@@ -1,0 +1,127 @@
+---
+title: "Stream Flow-Area Under Curves"
+author: "Ephraim Romesberg"
+date: "2025-05-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(lubridate)
+library(readxl)
+library(ggplot2)
+```
+
+
+Loading the data:
+```{r}
+PL_Inflow <- read_excel("Data/1993-94 Water year PL Inflow.xlsx")
+PL_Inflow$Date=as.Date(PL_Inflow$Date)
+#converting the date to a numeric value (number of days from minimum date in data)
+PL_Inflow$days_from_min=as.numeric(PL_Inflow$Date-min(PL_Inflow$Date))
+```
+
+
+Checking for incorrectly ordered and repeated values:
+```{r}
+PL_Inflow%>%group_by(Stream)%>%summarise(all(sort(days_from_min)==days_from_min))
+PL_Inflow%>%group_by(Stream)%>%summarise(n_distinct(days_from_min)==length(days_from_min))
+```
+
+Taking the integral of the cubic spline interpolation of the sampled data points (the log/exp transformation is done to avoid getting negative y values):
+```{r}
+spline_int=function(x,y,method="natural",log_trans=FALSE){
+  if (any(sort(x)!=x)) {stop("x values must be sorted in ascending order")}
+  m=min(x)
+  M=max(x)
+  if (log_trans){
+    s_f_l=splinefun(x,log(y),method = method)
+    s_f=function(x){exp(s_f_l(x))}
+  }
+  else {
+    s_f=splinefun(x,y,method = method)}
+  int=integrate(s_f,lower = m,upper = M)$value
+  average_val=int/(M-m)
+  return(data.frame(Area_Under_Curve=int,Average_Flow_Rate=average_val))
+}
+```
+
+
+Integration using the trapezoid rule:
+```{r}
+trapezoid_int=function(x,y){
+  if (any(sort(x)!=x)) {stop("x values must be sorted in ascending order")}
+  n=length(y)
+  m=min(x)
+  M=max(x)
+  dx=diff(x)
+  int=sum(((y[2:n]+y[1:(n-1)])/2)*dx)
+  average_val=int/(M-m)
+  return(data.frame(Area_Under_Curve=int,Average_Flow_Rate=average_val))
+}
+```
+
+
+Calculating the integral and average function value using CS interpolation:
+```{r}
+average_flow_rates_spline=PL_Inflow%>%group_by(Stream)%>%summarise(spline_int(days_from_min,`Flow Rate (cfs)`,log_trans = TRUE))
+average_flow_rates_spline$Area_Under_Curve=round(average_flow_rates_spline$Area_Under_Curve,2)
+average_flow_rates_spline$Average_Flow_Rate=round(average_flow_rates_spline$Average_Flow_Rate,2)
+average_flow_rates_spline
+```
+
+Using the trapezoid rule:
+```{r}
+average_flow_rates_trap=PL_Inflow%>%group_by(Stream)%>%summarise(trapezoid_int(days_from_min,`Flow Rate (cfs)`))
+average_flow_rates_trap$Area_Under_Curve=round(average_flow_rates_trap$Area_Under_Curve,2)
+average_flow_rates_trap$Average_Flow_Rate=round(average_flow_rates_trap$Average_Flow_Rate,2)
+average_flow_rates_trap
+```
+
+
+Plotting the CS interpolation function for each stream:
+```{r}
+sf=function(stream_name,n=500,method="natural",log_trans=FALSE){
+  data=filter(PL_Inflow,Stream==stream_name)
+  x=data$days_from_min
+  y=data$`Flow Rate (cfs)`
+  if (log_trans){
+    s_vals=spline(x,log(y),n=n,method=method)
+    s_vals$y=exp(s_vals$y)
+  }
+  else {
+    s_vals=spline(x,y,n=n,method=method)
+  }
+  return(data.frame(x=s_vals$x,y=s_vals$y))}
+```
+
+
+```{r}
+stream_names=unique(PL_Inflow$Stream)
+Spline_Functions=lapply(stream_names,FUN = sf,log_trans=TRUE)
+names(Spline_Functions)=stream_names
+Spline_Functions=bind_rows(Spline_Functions,.id = "Stream")
+```
+
+
+```{r}
+avg_flow_rate_spline=paste(average_flow_rates_spline$Stream,paste(average_flow_rates_spline$Average_Flow_Rate, "cfs"),sep = ": ")
+names(avg_flow_rate_spline)=average_flow_rates_spline$Stream
+ggplot(data = Spline_Functions,aes(x,y,group = Stream))+geom_line(aes(colour = Stream))+geom_point(data = PL_Inflow,aes(x=days_from_min,y=`Flow Rate (cfs)`,group = Stream))+facet_wrap(~Stream,scales = "free_y",labeller =labeller(Stream=avg_flow_rate_spline))+labs(title = "Averages using Cubic Spline Interpolation",x="day",y="flow rate (cfs)")+theme_bw()
+```
+
+Plotting the linear interpolation function for each stream:
+```{r}
+avg_flow_rate_trap=paste(average_flow_rates_trap$Stream,paste(average_flow_rates_trap$Average_Flow_Rate, "cfs"),sep = ": ")
+names(avg_flow_rate_trap)=average_flow_rates_trap$Stream
+ggplot(data = PL_Inflow,aes(x=days_from_min,y=`Flow Rate (cfs)`,group = Stream))+geom_line(aes(colour = Stream))+geom_point()+facet_wrap(~Stream,scales = "free_y",labeller = labeller(Stream=avg_flow_rate_trap))+labs(title = "Averages using Linear Interpolation",x="day",y="flow rate (cfs)")+theme_bw()
+```
+
+
+Exporting the area under the curve (cfs-days) and average flow rate (cfs) values for each stream (using linear and cubic spline interpolation to approximate the integrand):
+```{r}
+Average_Flow_Rates=bind_rows(list("Spline"=average_flow_rates_spline,"Linear"=average_flow_rates_trap),.id = "Interpolation Method")
+names(Average_Flow_Rates)[3:4]=c("Area_Under_Curve (cfs-days)", "Average_Flow_Rate (cfs)")
+writexl::write_xlsx(Average_Flow_Rates,path = "Data/Average_Flow_Rates.xlsx")
+```

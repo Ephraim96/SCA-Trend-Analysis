@@ -1,0 +1,76 @@
+---
+title: "GNAR plot2"
+author: "Ephraim Romesberg"
+date: "2024-07-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(ggplot2)
+library(readxl)
+library(lubridate)
+GNAR <- read.csv("Data/SCA_Database.csv")
+```
+
+
+```{r}
+GNAR=GNAR%>%filter(Site=="GNAR")
+```
+
+
+```{r}
+listOfDataFrames <- vector(mode = "list", length = length(unique(GNAR$Date)))
+
+for (i in 1:length(unique(GNAR$Date))) {
+  dat=filter(GNAR,Date==unique(GNAR$Date)[i])
+  dat.s=spline(x=dat$Depth,y=dat$Temp,n=1000)
+  listOfDataFrames[[i]] <- data.frame(Depth=dat.s$x,Temp=dat.s$y,Date=unique(GNAR$Date)[i])
+    }
+
+GNAR_spline=bind_rows(listOfDataFrames)
+```
+
+
+```{r}
+GNAR_spline$Year=year(GNAR_spline$Date)
+GNAR_spline$Month=month(GNAR_spline$Date,label = TRUE)
+GNAR$Month=month(GNAR$Date,label = TRUE)
+GNAR$Date=factor(GNAR$Date)
+GNAR_spline$Date=factor(GNAR_spline$Date)
+GNAR=GNAR%>%filter(Month %in% c("Feb","Jul"))
+GNAR_spline=GNAR_spline%>%filter(Month %in% c("Feb","Jul"))
+```
+
+
+```{r}
+Y=1995
+ggplot(data = filter(GNAR_spline,Year==Y),aes(x=Depth,y=Temp,group=Date,color=Date))+geom_line(linewidth=1)+geom_point(data=filter(GNAR,Year==Y),size=2,aes(shape = Date))+xlim(max(GNAR_spline$Depth),min(GNAR_spline$Depth))+ylim(min(GNAR_spline$Temp),max(GNAR_spline$Temp))+coord_flip()+theme_bw()+theme(plot.title = element_text(hjust = 0.5,size = 18),axis.title = element_text(size = 15),legend.title = element_text(size = 15),legend.text = element_text(size = 12))+labs(title=sprintf("GNAR Temperature Profile (%s)",Y),x="Depth (Meters)",y="Temperature (°C)")
+```
+
+```{r}
+ggsave("GNAR_plot1995_smooth4.png", width = 8, height = 6) 
+```
+
+
+```{r}
+Y=2024
+ggplot(data = filter(GNAR_spline,Year==Y),aes(x=Depth,y=Temp,group=Date,color=Date))+geom_line(linewidth=1)+geom_point(data=filter(GNAR,Year==Y),size=2,aes(shape = Date))+xlim(max(GNAR_spline$Depth),min(GNAR_spline$Depth))+ylim(min(GNAR_spline$Temp),max(GNAR_spline$Temp))+coord_flip()+theme_bw()+theme(plot.title = element_text(hjust = 0.5,size = 18),axis.title = element_text(size = 15),legend.title = element_text(size = 15),legend.text = element_text(size = 12))+labs(title=sprintf("GNAR Temperature Profile (%s)",Y),x="Depth (Meters)",y="Temperature (°C)")
+```
+
+
+```{r}
+ggsave("GNAR_plot2024_smooth4.png", width = 8, height = 6) 
+```
+
+
+```{r}
+Y=2024
+ggplot(data = filter(GNAR,Year==Y),aes(x=Depth,y=Temp,group=Date,color=Date))+geom_point(size=2)+geom_line(linewidth=1)+xlim(max(GNAR$Depth),min(GNAR$Depth))+ylim(min(GNAR$Temp),max(GNAR$Temp))+coord_flip()+theme_bw()+theme(plot.title = element_text(hjust = 0.5,size = 18),axis.title = element_text(size = 15),legend.title = element_text(size = 15),legend.text = element_text(size = 12))+labs(title=sprintf("GNAR Temperature Profile (%s)",Y),x="Depth (Meters)",y="Temperature (°C)")
+```
+
+```{r}
+Y=1995
+ggplot(data = filter(GNAR,Year==Y),aes(x=Depth,y=Temp,group=Date,color=Date))+geom_point(size=2)+geom_line(linewidth=1)+xlim(max(GNAR$Depth),min(GNAR$Depth))+ylim(min(GNAR$Temp),max(GNAR$Temp))+coord_flip()+theme_bw()+theme(plot.title = element_text(hjust = 0.5,size = 18),axis.title = element_text(size = 15),legend.title = element_text(size = 15),legend.text = element_text(size = 12))+labs(title=sprintf("GNAR Temperature Profile (%s)",Y),x="Depth (Meters)",y="Temperature (°C)")
+```
